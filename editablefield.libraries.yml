@@ -1,0 +1,6 @@
+editablefield:
+  js:
+    js/editablefield.js: {}
+  css:
+    component:
+      css/editablefield.css: {}

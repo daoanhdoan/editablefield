@@ -1,0 +1,114 @@
+<?php
+/**
+ *
+ */
+
+use Drupal\Component\Utility\NestedArray;
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Render\Markup;
+use Drupal\editablefield\Form\EditableFieldViewsForm;
+use Drupal\views\Plugin\views\field\FieldHandlerInterface;
+use Drupal\views\Plugin\views\ViewsHandlerInterface;
+use Drupal\views\ViewExecutable;
+
+/**
+ * Implementation of @see hook_field_formatter_info_alter().
+ */
+function editablefield_field_formatter_info_alter(&$info)
+{
+  $fields = \Drupal::service('plugin.manager.field.field_type')->getDefinitions();
+  $all_types = array_keys($fields);
+  $info['editablefield_formatter']['field_types'] = $all_types;
+}
+
+/**
+ * implement & @see hook_views_pre_build()
+ */
+function editablefield_views_pre_build(ViewExecutable $view)
+{
+  if (!empty($view->field)) {
+    foreach ($view->field as $field_id => $field) {
+      if (!empty($field->options['type']) && $field->options['type'] == 'editablefield_formatter') {
+        $field->views_form_callback = 'editablefield_views_form';
+      }
+    }
+  }
+}
+
+/**
+ * @param $form
+ * @param FormStateInterface $form_state
+ * @param $form_id
+ */
+function editablefield_views_form(ViewExecutable $view, FieldHandlerInterface $field, &$form, FormStateInterface &$form_state)
+{
+  $field->definition['click sortable'] = TRUE;
+  if (!empty($field->options['type']) && ($field->options['type'] == 'editablefield_formatter')) {
+    $form += \Drupal::service('editablefield.views_form')->form($form, $form_state, $view, $field);
+  }
+}
+
+function convert($size)
+{
+  $unit = array('b', 'kb', 'mb', 'gb', 'tb', 'pb');
+  return @round($size / pow(1024, ($i = floor(log($size, 1024)))), 2) . ' ' . $unit[$i];
+}
+
+/**
+ * Implement hook_template_preprocess_views_view_field()
+ */
+function editablefield_preprocess_views_view_field(&$variables)
+{
+  if (!empty($variables['field']->options['type']) && $variables['field']->options['type'] == 'editablefield_formatter') {
+    $text = '<!--form-item-' . $variables['field']->options['id'] . '--' . $variables['row']->index . '-->';
+    Markup::create($text);
+    $variables['output'] = Markup::create($text);
+  }
+}
+
+/**
+ * Implements @see hook_form_FORM_ID_alter() for views_ui_config_item_form.
+ */
+function editablefield_form_views_ui_config_item_form_alter(&$form, FormStateInterface $form_state, $form_id)
+{
+  /** @var ViewsHandlerInterface $handler */
+  $handler = $form_state->get('handler');
+  if ($handler->getPluginId() !== 'field') {
+    return;
+  }
+  $options = $handler->options;
+  if (!empty($options['type']) && $options['type'] == 'editablefield_formatter') {
+    $form['actions']['submit']['#submit'][] = 'editablefield_form_views_ui_config_item_form_submit';
+  }
+}
+
+/**
+ * Form submission handler.
+ *
+ * @param array $form
+ *   An associative array containing the structure of the form.
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   The current state of the form.
+ */
+function editablefield_form_views_ui_config_item_form_submit(array &$form, FormStateInterface &$form_state)
+{
+  $view = $form_state->get('view');
+  $display_id = $form_state->get('display_id');
+  $id = $form_state->get('id');
+  $type = $form_state->get('type');
+  $executable = $view->getExecutable();
+  $handler = $executable->getHandler($display_id, $type, $id);
+
+  // Set values.
+  $state_options = $form_state->getValue('options', []);
+
+  if (!empty($state_options['settings'])) {
+    $handler['settings'] = $state_options['settings'];
+    // Removing the form values of the views link attributes module.
+    $executable->setHandler($display_id, $type, $id, $handler);
+
+    // Write to cache
+    $view->cacheSet();
+  }
+
+}
