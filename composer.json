@@ -1,9 +1,12 @@
 {
-  "name": "daoanhdoan/editablefield",
-  "description": "Editable Field",
-  "type": "drupal-custom-module",
-  "license":"GPL-2.0",
-  "extra": {
-    "installer-name": "editablefield"
-  }
+    "name" : "daoanhdoan/editablefield",
+    "description": "Editable Field",
+    "type" : "drupal-custom-module",
+    "license": "GPL-2.0",
+    "extra": {
+        "installer-name": "editablefield"
+    },
+    "require": {
+        
+    }
 }
