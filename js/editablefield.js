@@ -39,6 +39,9 @@ Drupal.behaviors.editableFieldSubmit = {
         });
       }
     });
+    $('.editablefield-ajax-formatter').once().each(function () {
+
+    });
   }
 };
 

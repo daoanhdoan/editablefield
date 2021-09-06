@@ -4,6 +4,8 @@ namespace Drupal\editablefield\Form;
 
 use Drupal\Component\Utility\Html;
 use Drupal\Component\Utility\NestedArray;
+use Drupal\Core\Cache\Cache;
+use Drupal\Core\Cache\CacheableDependencyInterface;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\Entity\EntityViewDisplay;
 use Drupal\Core\Entity\EntityDisplayRepositoryInterface;
@@ -24,6 +26,9 @@ use Drupal\Core\Template\Attribute;
 use Drupal\Core\TempStore\PrivateTempStoreFactory;
 use Drupal\eck\Entity\EckEntity;
 use Drupal\user\Entity\User;
+use Drupal\views\Entity\Render\EntityTranslationRenderTrait;
+use Drupal\views\Plugin\views\field\FieldHandlerInterface;
+use Drupal\views\ViewExecutable;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -118,23 +123,24 @@ class EditableFieldForm extends FormBase
    *
    * Builds a form for a single entity field.
    */
-  public function buildForm(array $form, FormStateInterface $form_state)
+  public function buildForm(array $form, FormStateInterface $form_state, EntityInterface $entity = NULL, $field_name = NULL, $display = NULL)
   {
-    return $this->buildFieldForm($form, $form_state);
+    return $this->form($form, $form_state, $entity, $field_name, $display);
   }
 
   /**
    *
    */
-  public function form(array $form, FormStateInterface &$form_state)
+  public function form(array $form, FormStateInterface &$form_state, EntityInterface $entity = NULL, $field_name = NULL, $display = NULL)
   {
     /** @var EntityInterface $entity */
-    $entity = $form_state->get('entity');
-    $field_name = $form_state->get('field_name');
-    $display = $form_state->get('display');
+    $entity = $entity ?: $form_state->get('entity');
+    $field_name = $field_name ?: $form_state->get('field_name');
+    $display = $display ?: $form_state->get('display');
+
     $entity_type = $entity->getEntityTypeId();
     $id = $entity->id();
-    $vid = $entity->getEntityType()->isRevisionable() ? $entity->getLoadedRevisionId(): 0;
+    $vid = $entity->getEntityType()->isRevisionable() ? $entity->getLoadedRevisionId() : 0;
     $langcode = $form_state->get('langcode');
     $view_mode_id = $form_state->get('view_mode');
 
@@ -151,6 +157,8 @@ class EditableFieldForm extends FormBase
 
     $form['#field_name'] = $field_name;
     $form['#entity'] = $entity;
+    $form['#cache']['contexts'] = $this->getCacheContexts($entity, $langcode);
+    $form['#cache']['tags'] = $this->getCacheTags($entity, $field_name);
 
     $wrapper_attributes = new Attribute();
 
@@ -163,7 +171,7 @@ class EditableFieldForm extends FormBase
       $wrapper_attributes->setAttribute('data-quickedit-entity-id', $data_quickedit_entity_id);
     }
 
-    $wrapper_attributes->setAttribute('class', 'editablefield-item');
+    $wrapper_attributes->setAttribute('class', 'editablefield-item editablefield-item-' . md5(\Drupal::time()->getCurrentMicroTime()));
 
     $form['#prefix'] = '<div ' . $wrapper_attributes->__toString() . '>';
     $form['#suffix'] = '</div>';
@@ -493,5 +501,150 @@ class EditableFieldForm extends FormBase
       $lines = count(explode("\n", $widget_element[0]['value']['#default_value']));
       $widget_element[0]['value']['#rows'] = $lines + 1;
     }
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getCacheContexts(EntityInterface $entity, $langcode) {
+    return Cache::mergeContexts(
+      $this->entityRepository->getTranslationFromContext($entity, $langcode)->getCacheContexts(),
+      ['user']
+    );
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getCacheMaxAge() {
+    return Cache::PERMANENT;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getCacheTags(EntityInterface $entity, $field_name) {
+    $field_definition = $this->getBundleFieldDefinition($entity, $field_name);
+    $field_storage_definition = $field_definition->getFieldStorageDefinition();
+
+    return Cache::mergeTags(
+      $field_definition instanceof CacheableDependencyInterface ? $field_definition->getCacheTags() : [],
+      $field_storage_definition instanceof CacheableDependencyInterface ? $field_storage_definition->getCacheTags() : []
+    );
+  }
+
+  /**
+   * Collects the definition of field.
+   *
+   * @param string $bundle
+   *   The bundle to load the field definition for.
+   *
+   * @return \Drupal\Core\Field\FieldDefinitionInterface|null
+   *   The field definition. Null if not set.
+   */
+  protected function getBundleFieldDefinition(EntityInterface $entity, $field_name) {
+    $field_definitions = \Drupal::service('entity_field.manager')->getFieldDefinitions($entity->getEntityTypeId(), $entity->bundle());
+    return (array_key_exists($field_name, $field_definitions)) ? $field_definitions[$field_name] : NULL;
+  }
+
+  /**
+   * @inheritDoc
+   */
+  public function viewsForm(array $form, FormStateInterface &$form_state, ViewExecutable $view = NULL, FieldHandlerInterface $field = NULL)
+  {
+    $field_name = array_search($field, $view->field, TRUE);
+    $form_element_name = $field_name;
+    if (method_exists($field, 'form_element_name')) {
+      $form_element_name = $field->form_element_name();
+    }
+    $method_form_element_row_id_exists = FALSE;
+    if (method_exists($field, 'form_element_row_id')) {
+      $method_form_element_row_id_exists = TRUE;
+    }
+
+    foreach ($view->result as $row_id => $row) {
+      if ($method_form_element_row_id_exists) {
+        $form_element_row_id = $field->form_element_row_id($row_id);
+      } else {
+        $form_element_row_id = $row_id;
+      }
+
+      $entity = $field->getEntity($row);
+
+      if (!$entity) {
+        continue;
+      }
+
+      $display = $field->options;
+      $display['label'] = 'hidden';
+
+      $form_state->set('view_mode', 'views_view');
+      $form_state->set('row_id', $row_id);
+
+      $field_form = array(
+        '#parents' => array($form_element_name, $form_element_row_id),
+        '#tree' => TRUE,
+      );
+
+      $field_form += $this->form($field_form, $form_state, $entity, $field->definition['field_name'], $display);
+      $form_id = $this->getFormId();
+      \Drupal::moduleHandler()->alter(['form', 'editablefield_views_form'], $field_form, $form_state, $form_id);
+      $field_form['actions']['submit']['#submit'][] = [$this, 'submitViewsForm'];
+
+      $form[$form_element_name][$form_element_row_id] = $field_form;
+      $form['#cache']['max-age'] = 0;
+    }
+    return $form;
+  }
+
+  /**
+   * @inheritDoc
+   */
+  public function submitViewsForm(array &$form, FormStateInterface $form_state)
+  {
+    $trigger = $form_state->getTriggeringElement();
+    $parents = $trigger['#array_parents'];
+    $parents = array_slice($parents, 0, -2);
+
+    if ($trigger['#op'] == 'edit') {
+      EditableFieldForm::submitEditMode($form, $form_state);
+      return;
+    }
+
+    $field_form = &NestedArray::getValue($form, $parents);
+
+    if ($field_form) {
+      /** @var \Drupal\Core\Entity\ContentEntityInterface $entity */
+      $entity = $field_form['#entity'];
+      $field_name = $field_form['#field_name'];
+
+      if ($entity->getEntityTypeId() == 'node') {
+        $node_type = $this->entityTypeManager->getStorage('node_type')->load($entity->bundle());
+        $entity->setNewRevision($node_type->shouldCreateNewRevision());
+        $entity->revision_log = NULL;
+      }
+
+      $form_state->set('entity', $entity);
+      /*if ($entity instanceof RevisionableInterface) {
+        $vid = $entity->getLoadedRevisionId();
+        if (!empty($vid) && !$entity->isDefaultRevision()) {
+          $entity->setNewRevision(FALSE);
+          $entity->setChangedTime(time());
+        }
+      }*/
+      // Fetch the display used by the form. It is the display for the 'default'
+      // form mode, with only the current field visible.
+      $display = EditableFieldForm::getFormDisplay($entity, $field_name);
+      $display->extractFormValues($entity, $field_form, $form_state);
+      $display->validateFormValues($entity, $field_form, $form_state);
+
+      if ($entity->getEntityTypeId() == 'node' && $entity->isNewRevision() && $entity->revision_log->isEmpty()) {
+        $entity->revision_log = t('Updated the %field-name field through editable field.', ['%field-name' => $entity->get($field_name)->getFieldDefinition()->getLabel()]);
+      }
+      $entity->save();
+    }
+
+    EditableFieldForm::setEditMode($form_state, FALSE, $parents);
+    $form_state->setRebuild();
   }
 }

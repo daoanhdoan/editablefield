@@ -129,6 +129,11 @@ class EditableFieldFormatter extends FormatterBase
     $formatters = $this->fieldFormatterManager->getOptions($this->fieldDefinition->getType());
     unset($formatters['editablefield_formatter']);
     $field_name = $this->fieldDefinition->getName();
+
+    if ($form_state->get('form_id') == 'views_ui_config_item_form') {
+      $field_name = $form_state->get('id');
+    }
+
     $settings = $form_state->get(['formatter_settings', $field_name]);
     if ($settings) {
       $this->setSettings($settings);
@@ -179,7 +184,7 @@ class EditableFieldFormatter extends FormatterBase
         '#field_name' => $this->fieldDefinition->getName(),
         '#op' => 'edit',
         '#executes_submit_callback' => TRUE,
-        '#submit' => [[get_called_class(), 'ajaxFormMultistepSubmit']],
+        '#submit' => [[get_called_class(), 'ajaxFormMultiStepSubmit']],
         '#ajax' => array(
           'callback' => '::multistepAjax',
           'wrapper' => 'field-display-overview-wrapper',
@@ -259,7 +264,6 @@ class EditableFieldFormatter extends FormatterBase
         foreach ($settingsSummary as $setting) {
           $summary[] = $setting;
         }
-
       }
     }
 
@@ -293,10 +297,9 @@ class EditableFieldFormatter extends FormatterBase
   /**
    * Form submit handler for AJAX change of the fallback formatter.
    */
-  public static function ajaxFormMultistepSubmit($form, FormStateInterface &$form_state)
+  public static function ajaxFormMultiStepSubmit($form, FormStateInterface &$form_state)
   {
     $trigger = $form_state->getTriggeringElement();
-    $op = $trigger['#op'];
     // Store the saved settings.
     $field_name = $trigger['#field_name'];
     $values = NestedArray::getValue($form_state->getValues(), ['fields', $field_name, 'settings_edit_form', 'settings']);
@@ -310,15 +313,21 @@ class EditableFieldFormatter extends FormatterBase
   public function submitTemporaryForm(&$form, FormStateInterface &$form_state)
   {
     /** @var \Drupal\views\Plugin\views\field\FieldPluginBase $handler */
+    $values = NestedArray::getValue($form_state->getValues(), ['options', 'settings']);
+
+    $fallback_formatter = \Drupal::service('plugin.manager.field.formatter')->getDefinition($values['fallback_format']);
+    $defaultSettings = call_user_func([$fallback_formatter['class'], 'defaultSettings']);
+    $values['fallback_settings'] = $defaultSettings;
+    NestedArray::setValue($form_state->getValues(), ['options', 'settings'], $values);
+
     $handler = &$form_state->get('handler');
     if ($handler) {
       // Run it through the handler's submit function.
-      $handler->submitOptionsForm($form['options'], $form_state);
       $handler->submitTemporaryForm($form, $form_state);
     }
 
-    $values = NestedArray::getValue($form_state->getValues(), ['options', 'settings']);
     $form_state->set(['formatter_settings', $form_state->get('id')], $values);
+    editablefield_form_views_ui_config_item_form_submit($form, $form_state);
   }
 
   public function fallbackFormatter(FieldItemListInterface $items, $langcode)
@@ -351,9 +360,6 @@ class EditableFieldFormatter extends FormatterBase
       $form_state = (new FormState())
         ->set('langcode', $langcode)
         ->set('view_mode', $this->viewMode)
-        ->set('entity', $entity)
-        ->set('field_name', $field_name)
-        ->set('display', $display)
         ->disableRedirect()
         ->setRequestMethod('POST')
         ->setCached(TRUE)
