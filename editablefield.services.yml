@@ -2,6 +2,3 @@ services:
   editablefield.form:
     class: Drupal\editablefield\Form\EditableFieldForm
     arguments: ['@entity_type.manager', '@entity.repository', '@module_handler']
-  editablefield.views_form:
-    class: Drupal\editablefield\Form\EditableFieldViewsForm
-    arguments: ['@entity_type.manager', '@editablefield.form']
