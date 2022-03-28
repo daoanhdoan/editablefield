@@ -36,10 +36,12 @@ function editablefield_views_pre_build(ViewExecutable $view)
     if ($resetCache) {
       /** @var CachePluginBase $cache */
       $cache = $view->display_handler->getPlugin('cache');
-      //$key = $cache->generateResultsKey();
-      //if (!Drupal::cache('data')->get($key, TRUE)) {
-        //$cache->cacheFlush();
-      //}
+      if ($cache) {
+        $key = $cache->generateResultsKey();
+        if (!Drupal::cache('data')->get($key, TRUE)) {
+          $cache->cacheFlush();
+        }
+      }
     }
   }
 }
